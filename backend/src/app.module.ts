@@ -25,6 +25,7 @@ import { MetadataSchemaModule } from './modules/metadata-schema/metadata-schema.
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { AdminAnalyticsModule } from './modules/admin-analytics/admin-analytics.module';
 import { SecurityModule } from './modules/security/security.module';
+import { MultisigModule } from './modules/multisig/multisig.module';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { SecurityModule } from './modules/security/security.module';
     NotificationsModule,
     AdminAnalyticsModule,
     SecurityModule,
+    MultisigModule,
   ],
   controllers: [AppController],
   providers: [AppService],

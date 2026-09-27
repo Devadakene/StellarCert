@@ -25,16 +25,12 @@ class InitMultisigConfigDto {
   threshold: number;
   signers: string[];
   maxSigners: number;
-
-  constructor(private readonly logger: LoggingService) {}
 }
 
 class UpdateMultisigConfigDto {
   threshold?: number;
   signers?: string[];
   maxSigners?: number;
-
-  constructor(private readonly logger: LoggingService) {}
 }
 
 class ProposeCertificateDto {
@@ -43,33 +39,23 @@ class ProposeCertificateDto {
   recipient: string;
   metadata: string;
   expirationDays: number;
-
-  constructor(private readonly logger: LoggingService) {}
 }
 
 class ApproveRequestDto {
   requestId: string;
-
-  constructor(private readonly logger: LoggingService) {}
 }
 
 class RejectRequestDto {
   requestId: string;
   reason?: string;
-
-  constructor(private readonly logger: LoggingService) {}
 }
 
 class IssueCertificateDto {
   requestId: string;
-
-  constructor(private readonly logger: LoggingService) {}
 }
 
 class CancelRequestDto {
   requestId: string;
-
-  constructor(private readonly logger: LoggingService) {}
 }
 
 @Controller('multisig')

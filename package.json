@@ -46,9 +46,6 @@
     "lint-staged": "^17.2.0",
     "prettier": "^3.9.9"
   },
-  "dependencies": {
-    "puppeteer": "^24.42.0"
-  },
   "lint-staged": {
     "*.{ts,tsx,js,jsx}": [
       "eslint --fix",

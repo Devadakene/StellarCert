@@ -298,17 +298,40 @@ fn test_get_revoked_certificates_pagination() {
         client.revoke_certificate(&issuer, &s, &RevocationReason::KeyCompromise, &None);
     }
 
-    let page0 = client.get_revoked_certificates(&0, &3);
-    assert_eq!(page0.len(), 3);
-
+    // Pagination is 1-indexed: page 1 is the first page. A `page` of 0 is
+    // normalized to the first page, matching the certificate contract's
+    // listings.
     let page1 = client.get_revoked_certificates(&1, &3);
     assert_eq!(page1.len(), 3);
+    assert_eq!(page1.get(0).unwrap().certificate_id, String::from_str(&env, "CERT-0"));
 
     let page2 = client.get_revoked_certificates(&2, &3);
-    assert_eq!(page2.len(), 1); // only 1 left
+    assert_eq!(page2.len(), 3);
+    assert_eq!(page2.get(0).unwrap().certificate_id, String::from_str(&env, "CERT-3"));
 
     let page3 = client.get_revoked_certificates(&3, &3);
-    assert_eq!(page3.len(), 0); // beyond end
+    assert_eq!(page3.len(), 1); // only 1 left
+
+    let page4 = client.get_revoked_certificates(&4, &3);
+    assert_eq!(page4.len(), 0); // beyond end
+
+    // Page 0 is normalized to the first page (saturating), not skipped.
+    let page0 = client.get_revoked_certificates(&0, &3);
+    assert_eq!(page0.len(), 3);
+    assert_eq!(page0.get(0).unwrap().certificate_id, String::from_str(&env, "CERT-0"));
+}
+
+#[test]
+fn test_get_revoked_certificates_limit_cap() {
+    let (env, issuer, cert_contract) = setup();
+    let (_, client) = make_client(&env);
+    env.mock_all_auths();
+    client.initialize(&issuer, &cert_contract);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.get_revoked_certificates(&1, &101)
+    }));
+    assert!(result.is_err(), "limit above MAX_PAGE_SIZE should panic");
 }
 
 #[test]

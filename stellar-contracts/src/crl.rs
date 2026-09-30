@@ -5,6 +5,12 @@ use soroban_sdk::{
 
 const DEFAULT_UPDATE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 
+/// Hard ceiling on the `limit` argument of paginated views. Mirrors the cap
+/// used by the certificate contract's listings so a caller cannot force a
+/// single invocation to walk the entire revocation list and exhaust the
+/// transaction's compute budget.
+const MAX_PAGE_SIZE: u32 = 100;
+
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RevocationReason {
@@ -288,7 +294,15 @@ impl CRLContract {
         Self::get_crl_info_internal(&env)
     }
 
+    /// Page numbers are 1-indexed: the first page is `1` (a `page` of `0` is
+    /// normalized to the first page). This matches the pagination used by the
+    /// certificate contract's listings, so a client can use the same paging
+    /// convention for both contracts without skipping pages.
     pub fn get_revoked_certificates(env: Env, page: u32, limit: u32) -> Vec<RevocationInfo> {
+        if limit > MAX_PAGE_SIZE {
+            panic!("Pagination limit exceeds maximum allowed");
+        }
+
         let revoked_certificates = Self::get_revoked_certificate_ids(&env);
         let mut page_of_revocations = Vec::new(&env);
 
@@ -296,7 +310,7 @@ impl CRLContract {
             return page_of_revocations;
         }
 
-        let start = page.saturating_mul(limit);
+        let start = page.saturating_sub(1).saturating_mul(limit);
         let mut end = start.saturating_add(limit);
         let total = revoked_certificates.len();
         if end > total {

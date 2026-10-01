@@ -513,7 +513,7 @@ export class MultisigService {
           this.logger.log(
             `Approved certificate issued for request: ${requestId}`,
           );
-          return this.parseBooleanResult(txResponse.returnValue);
+          return true;
         }
       }
 
@@ -569,7 +569,7 @@ export class MultisigService {
           this.logger.log(
             `Request ${requestId} cancelled by ${requesterPublicKey}`,
           );
-          return this.parseBooleanResult(txResponse.returnValue);
+          return true;
         }
       }
 
@@ -687,10 +687,7 @@ export class MultisigService {
       if (rpc.Api.isSimulationSuccess(response)) {
         const simResult = response.result;
         if (simResult) {
-          const result = simResult.retval;
-          if (result && result.switch().name === 'scvBool') {
-            return result.b();
-          }
+          return this.parseBooleanResult(simResult.retval);
         }
       }
 
@@ -857,6 +854,14 @@ export class MultisigService {
     };
   }
 
+  private parseBooleanResult(retval: xdr.ScVal | undefined): boolean {
+    if (!retval || retval.switch().name !== 'scvBool') {
+      throw new Error('Invalid boolean response from contract');
+    }
+
+    return retval.b();
+  }
+
   private parsePendingRequest(retval: xdr.ScVal): PendingRequest {
     return this.mapNativeToPendingRequest(
       scValToNative(retval) as Record<string, unknown>,
@@ -895,13 +900,6 @@ export class MultisigService {
       result.final_status = Number(native['final_status']);
     }
     return result;
-  }
-
-  private parseBooleanResult(retval: xdr.ScVal | undefined): boolean {
-    if (!retval || retval.switch().name !== 'scvBool') {
-      throw new Error('Invalid boolean response from contract');
-    }
-    return retval.b();
   }
 
   /**

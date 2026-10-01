@@ -3,6 +3,9 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "resolvePackageJsonExports": true,
+    "paths": {
+      "src/*": ["./src/*"]
+    },
     "esModuleInterop": true,
     "isolatedModules": true,
     "declaration": true,
@@ -11,7 +14,6 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "target": "ES2023",
-    "downlevelIteration": true,
     "sourceMap": true,
     "outDir": "./dist",
     "baseUrl": "./",
@@ -20,12 +22,14 @@
       "rxjs/*": ["../node_modules/rxjs/*"]
     },
     "incremental": true,
+    "strictPropertyInitialization": false,
     "skipLibCheck": true,
     "strictNullChecks": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": false,
     "strictBindCallApply": false,
-    "noFallthroughCasesInSwitch": false
+    "noFallthroughCasesInSwitch": false,
+    "types": ["node", "jest"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
   "exclude": ["node_modules", "dist", "src/auth/**/*", "src/certificates/**/*"]

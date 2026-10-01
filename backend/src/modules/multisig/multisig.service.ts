@@ -112,6 +112,37 @@ export class MultisigService {
   /**
    * Initialize multisig configuration for an issuer
    */
+
+  /**
+   * Issue #721 – Poll getTransaction until the RPC reports a terminal status.
+   * Calling getTransaction in the same tick as sendTransaction almost always
+   * returns PENDING/NOT_FOUND; we must wait for SUCCESS or FAILED.
+   */
+  private async waitForTransaction(
+    hash: string,
+    options?: { maxAttempts?: number; intervalMs?: number },
+  ): Promise<rpc.Api.GetTransactionResponse> {
+    const maxAttempts = options?.maxAttempts ?? 30;
+    const intervalMs = options?.intervalMs ?? 2000;
+
+    let last: rpc.Api.GetTransactionResponse | undefined;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      last = await this.server.getTransaction(hash);
+      const status = last.status;
+      if (
+        status === rpc.Api.GetTransactionStatus.SUCCESS ||
+        status === rpc.Api.GetTransactionStatus.FAILED
+      ) {
+        return last;
+      }
+      // NOT_FOUND / PENDING – wait and retry
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    throw new Error(
+      `Transaction ${hash} not finalized after ${maxAttempts} attempts (last status: ${last?.status ?? 'unknown'})`,
+    );
+  }
+
   async initMultisigConfig(
     adminPublicKey: string,
     issuer: string,

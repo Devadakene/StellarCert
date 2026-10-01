@@ -53,6 +53,9 @@ import { MultisigModule } from './modules/multisig/multisig.module';
     BullBoardModule.forRoot({
       route: '/admin/queues',
       adapter: ExpressAdapter,
+      // Nest guards never run on Bull Board's own Express mount, so the
+      // dashboard is protected with a middleware that actually runs there.
+      middleware: BullBoardAuthMiddleware,
     }),
     TypeOrmModule.forRoot(typeOrmConfig),
     CommonModule,

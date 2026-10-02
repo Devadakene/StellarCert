@@ -1,2 +1,3 @@
-﻿export const notificationsApi = {};
+export const notificationsApi = {};
+
 

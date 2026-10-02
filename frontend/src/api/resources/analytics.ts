@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActivityItem,
   AdminAnalytics,
   ApiError,
@@ -32,7 +32,7 @@
   VerifyEmailRequest,
 } from "../types";
 import { tokenStorage, notifyTokenRefreshed } from '../tokens';
-import { apiClient, apiClientRaw, USE_DUMMY_DATA, API_URL, dummyData, simulateDelay, handleError } from '../client';
+import { apiClient, apiClientRaw, API_URL, dummyData, simulateDelay, handleError } from '../client';
 
 type CertificateStatsResponse = {
   totalCertificates: number;
@@ -100,7 +100,7 @@ const buildRecentActivityFromCertificates = (
 
 export const dailyCertificateVerification =
   async (): Promise<DailyVerificationStats> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return { count: Math.floor(Math.random() * 50) + 20 };
     }
@@ -110,7 +110,7 @@ export const dailyCertificateVerification =
   };
 
 export const totalCertificates = async (): Promise<TotalCertificatesStats> => {
-  if (USE_DUMMY_DATA) {
+  if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
     await simulateDelay();
     return { total: dummyData.certificates.length };
   }
@@ -118,7 +118,7 @@ export const totalCertificates = async (): Promise<TotalCertificatesStats> => {
 };
 
 export const totalActiveUsers = async (): Promise<TotalActiveUsersStats> => {
-  if (USE_DUMMY_DATA) {
+  if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
     await simulateDelay();
     return { total: dummyData.users.length };
   }
@@ -131,7 +131,7 @@ export const analyticsApi = {
     endDate?: string;
     issuerId?: string;
   }): Promise<DashboardStats> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
 
       let certificates = dummyData.certificates;
@@ -195,7 +195,7 @@ export const adminAnalyticsApi = {
     startDate?: string;
     endDate?: string;
   }): Promise<import("./types").AdminAnalytics> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return {
         usersByRole: {
@@ -254,7 +254,7 @@ export const adminAnalyticsApi = {
 
 export const dashboardApi = {
   getStats: async (): Promise<DashboardStats> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return {
         totalCertificates: 1250,
@@ -298,7 +298,7 @@ export const dashboardApi = {
   },
 
   getRecentActivity: async (limit = 10): Promise<ActivityItem[]> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return [
         {
@@ -311,3 +311,4 @@ export const dashboardApi = {
     return apiClient<ActivityItem[]>(`/admin/analytics/activity?limit=${limit}`);
   },
 };
+

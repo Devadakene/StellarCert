@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActivityItem,
   AdminAnalytics,
   ApiError,
@@ -32,7 +32,7 @@
   VerifyEmailRequest,
 } from "../types";
 import { tokenStorage, notifyTokenRefreshed } from '../tokens';
-import { apiClient, apiClientRaw, USE_DUMMY_DATA, API_URL, dummyData, simulateDelay, handleError } from '../client';
+import { apiClient, apiClientRaw, API_URL, dummyData, simulateDelay, handleError } from '../client';
 
 // ==================== AUDIT LOGS (#283) ====================
 
@@ -47,7 +47,7 @@ export const auditApi = {
     return apiClient<PaginatedActivityLog>(`/audit?${searchParams.toString()}`);
   },
   getCertificateHistory: async (certificateId: string): Promise<ActivityItem[]> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return [
         {
@@ -94,7 +94,7 @@ export const auditApi = {
       });
     }
 
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return {
         data: [
@@ -124,7 +124,7 @@ export const auditApi = {
       });
     }
 
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return {
         total: 1,
@@ -151,3 +151,4 @@ export const auditApi = {
     return `${API_URL}/audit/export${query ? `?${query}` : ""}`;
   },
 };
+

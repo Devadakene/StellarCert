@@ -1,4 +1,4 @@
-ï»¿import {
+import {
   ActivityItem,
   AdminAnalytics,
   ApiError,
@@ -42,11 +42,7 @@ interface AuditLogQueryParams {
   limit?: number;
 }
 
-// Configuration flag - can be enabled via Vite env `VITE_USE_DUMMY_DATA` ("true"/"false") in development only.
 const viteEnv = import.meta as unknown as { env: Record<string, string> };
-const USE_DUMMY_DATA =
-  viteEnv.env?.VITE_USE_DUMMY_DATA === "true" &&
-  viteEnv.env?.MODE !== "production";
 const API_URL_BASE = viteEnv.env?.VITE_API_URL || "http://localhost:3000/api/v1";
 export const API_URL = API_URL_BASE;
 
@@ -174,7 +170,7 @@ export async function apiClient<T>(
           statusCode: response.status,
         }));
 
-        // Never attempt a refresh for the refresh call itself (skipAuth) â€” that
+        // Never attempt a refresh for the refresh call itself (skipAuth) — that
         // would recurse into refreshTokens and, with the shared in-flight
         // promise, deadlock the request against itself.
         if (response.status === 401 && !hasTriedRefresh && !options.skipAuth) {
@@ -252,7 +248,7 @@ export async function apiClient<T>(
  * (file/blob downloads and multipart uploads) rather than the parsed,
  * envelope-unwrapped JSON that `apiClient` returns. It attaches the bearer
  * token and performs a single transparent refresh-and-retry on a 401, but does
- * NOT force a JSON `Content-Type` â€” so callers can send `FormData` (letting the
+ * NOT force a JSON `Content-Type` — so callers can send `FormData` (letting the
  * browser set the multipart boundary) or their own JSON body.
  */
 export async function apiClientRaw(
@@ -348,4 +344,6 @@ export const dummyData = {
     },
   ] as CertificateTemplate[],
 };
+
+
 

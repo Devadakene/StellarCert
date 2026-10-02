@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActivityItem,
   AdminAnalytics,
   ApiError,
@@ -32,14 +32,14 @@
   VerifyEmailRequest,
 } from "../types";
 import { tokenStorage, notifyTokenRefreshed } from '../tokens';
-import { apiClient, apiClientRaw, USE_DUMMY_DATA, API_URL, dummyData, simulateDelay, handleError } from '../client';
+import { apiClient, apiClientRaw, API_URL, dummyData, simulateDelay, handleError } from '../client';
 
 // ==================== AUTHENTICATION ====================
 
 export const loginApi = async (
   credentials: LoginCredentials,
 ): Promise<AuthResponse> => {
-  if (USE_DUMMY_DATA) {
+  if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
     await simulateDelay();
     const user = dummyData.users.find((u) => u.email === credentials.email);
     if (user && credentials.password === "password123") {
@@ -70,7 +70,7 @@ export const loginApi = async (
 export const registerApi = async (
   data: RegisterData,
 ): Promise<AuthResponse> => {
-  if (USE_DUMMY_DATA) {
+  if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
     await simulateDelay();
     const newUser: User = {
       id: `user-${Date.now()}`,
@@ -121,7 +121,7 @@ export const authApi = {
   refresh: (): Promise<AuthResponse> => refreshTokens(),
   logout: async (): Promise<void> => {
     try {
-      if (!USE_DUMMY_DATA) {
+      if (!(import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
         const accessToken = tokenStorage.getAccessToken();
         await apiClient("/auth/logout", {
           method: "POST",
@@ -164,3 +164,4 @@ export const authApi = {
 
 export const login = loginApi;
 export const register = registerApi;
+

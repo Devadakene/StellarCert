@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActivityItem,
   AdminAnalytics,
   ApiError,
@@ -32,12 +32,12 @@
   VerifyEmailRequest,
 } from "../types";
 import { tokenStorage, notifyTokenRefreshed } from '../tokens';
-import { apiClient, apiClientRaw, USE_DUMMY_DATA, API_URL, dummyData, simulateDelay, handleError } from '../client';
+import { apiClient, apiClientRaw, API_URL, dummyData, simulateDelay, handleError } from '../client';
 
 // ==================== USER MANAGEMENT ====================
 
 export const fetchUserByEmail = async (email: string): Promise<User | null> => {
-  if (USE_DUMMY_DATA) {
+  if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
     await simulateDelay();
     const user = dummyData.users.find((user) => user.email === email);
 
@@ -100,7 +100,7 @@ export const userApi = {
 
 export const issuerProfileApi = {
   getStats: async (): Promise<IssuerStats> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return {
         totalCertificates: 125,
@@ -117,7 +117,7 @@ export const issuerProfileApi = {
     page: number = 1,
     limit: number = 10,
   ): Promise<PaginatedActivityLog> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       const activities = [
         {
@@ -144,7 +144,7 @@ export const issuerProfileApi = {
     );
   },
   updateProfile: async (data: ProfileUpdateData): Promise<User> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return dummyData.users[0];
     }
@@ -156,7 +156,7 @@ export const issuerProfileApi = {
   uploadProfilePicture: async (
     file: File,
   ): Promise<{ profilePicture: string; message: string }> => {
-    if (USE_DUMMY_DATA) {
+    if ((import.meta.env.VITE_USE_DUMMY_DATA === 'true')) {
       await simulateDelay();
       return {
         profilePicture: URL.createObjectURL(file),
@@ -184,3 +184,4 @@ export const issuerProfileApi = {
     return response.json();
   },
 };
+

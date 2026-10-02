@@ -1,9 +1,15 @@
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, IntoVal,
+    contract, contractevent, contractimpl, contracttype, Address, Bytes, BytesN, Env, IntoVal,
     String, Val, Vec,
 };
 
 const DEFAULT_UPDATE_WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
+
+/// Hard ceiling on the `limit` argument of paginated views. Mirrors the cap
+/// used by the certificate contract's listings so a caller cannot force a
+/// single invocation to walk the entire revocation list and exhaust the
+/// transaction's compute budget.
+const MAX_PAGE_SIZE: u32 = 100;
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,9 +61,21 @@ pub struct CRLInfo {
 /// detect a CRL that has fallen out of sync with the contract.
 ///
 /// Topics: `("crl", "revoked", <certificate_id>)`.
-#[contracttype]
+/// Topics: `("crl", "revoked", <certificate_id>)`.
+///
+/// Declared with `#[contractevent]` so the topic list and payload shape are
+/// checked at compile time and published into the contract spec. The migration
+/// is wire-compatible with the `env.events().publish(...)` call it replaces: as
+/// with the events in `types.rs`, the old call published the certificate id as
+/// the third topic *and* inside the payload, so a `#[topic]` copy of it is
+/// carried alongside the `certificate_id` that stays in the data map. Both must
+/// be set to the same value; `events_test` asserts the full wire form.
+#[contractevent(topics = ["crl", "revoked"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CRLRevocationAddedEvent {
+    /// Copy of `certificate_id` published as the third topic.
+    #[topic]
+    pub topic_certificate_id: String,
     pub certificate_id: String,
     pub reason: u32,
     pub revoked_by: Address,
@@ -241,24 +259,19 @@ impl CRLContract {
         // contract goes through `revoke_certificate_mirrored`, and both paths
         // must publish exactly the same event — an indexer must not be able to
         // tell them apart.
-        env.events().publish(
-            (
-                symbol_short!("crl"),
-                symbol_short!("revoked"),
-                certificate_id.clone(),
-            ),
-            CRLRevocationAddedEvent {
-                certificate_id: certificate_id.clone(),
-                reason: revocation_info.reason,
-                revoked_by: revocation_info.revoked_by.clone(),
-                revocation_date: revocation_info.revocation_date,
-                revoked_count: crl_info.revoked_count,
-                crl_number: crl_info.crl_number,
-                merkle_root: crl_info.merkle_root.clone(),
-                this_update: crl_info.this_update,
-                next_update: crl_info.next_update,
-            },
-        );
+        CRLRevocationAddedEvent {
+            topic_certificate_id: certificate_id.clone(),
+            certificate_id: certificate_id.clone(),
+            reason: revocation_info.reason,
+            revoked_by: revocation_info.revoked_by.clone(),
+            revocation_date: revocation_info.revocation_date,
+            revoked_count: crl_info.revoked_count,
+            crl_number: crl_info.crl_number,
+            merkle_root: crl_info.merkle_root.clone(),
+            this_update: crl_info.this_update,
+            next_update: crl_info.next_update,
+        }
+        .publish(env);
     }
 
     pub fn is_revoked(env: Env, certificate_id: String) -> bool {
@@ -281,7 +294,15 @@ impl CRLContract {
         Self::get_crl_info_internal(&env)
     }
 
+    /// Page numbers are 1-indexed: the first page is `1` (a `page` of `0` is
+    /// normalized to the first page). This matches the pagination used by the
+    /// certificate contract's listings, so a client can use the same paging
+    /// convention for both contracts without skipping pages.
     pub fn get_revoked_certificates(env: Env, page: u32, limit: u32) -> Vec<RevocationInfo> {
+        if limit > MAX_PAGE_SIZE {
+            panic!("Pagination limit exceeds maximum allowed");
+        }
+
         let revoked_certificates = Self::get_revoked_certificate_ids(&env);
         let mut page_of_revocations = Vec::new(&env);
 
@@ -289,7 +310,7 @@ impl CRLContract {
             return page_of_revocations;
         }
 
-        let start = page.saturating_mul(limit);
+        let start = page.saturating_sub(1).saturating_mul(limit);
         let mut end = start.saturating_add(limit);
         let total = revoked_certificates.len();
         if end > total {

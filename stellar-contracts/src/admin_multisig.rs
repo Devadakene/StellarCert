@@ -1,6 +1,6 @@
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, IntoVal, String, Val,
-    Vec,
+    contract, contractevent, contractimpl, contracttype, Address, BytesN, Env, IntoVal, String,
+    Val, Vec,
 };
 
 #[contracttype]
@@ -54,7 +54,16 @@ pub struct AdminProposal {
     pub status: AdminProposalStatus,
 }
 
-#[contracttype]
+// Admin multisig contract events. Declared with `#[contractevent]` so the topic
+// list and payload shape are checked at compile time and published into the
+// contract spec. The `topics = [...]` lists reproduce the two-symbol topics the
+// previous untyped `env.events().publish` calls used, keeping the on-chain event
+// stream wire-compatible; the payload is a map keyed by field name.
+//
+// `ProposalExecutedEvent` is the exception: the call it replaces published a bare
+// `proposal_id` string rather than a struct, so it uses `data_format =
+// "single-value"` to stay byte-for-byte identical.
+#[contractevent(topics = ["proposal", "created"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProposalCreatedEvent {
     pub proposal_id: String,
@@ -62,7 +71,7 @@ pub struct ProposalCreatedEvent {
     pub expires_at_ledger: u32,
 }
 
-#[contracttype]
+#[contractevent(topics = ["proposal", "approved"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProposalApprovedEvent {
     pub proposal_id: String,
@@ -71,11 +80,17 @@ pub struct ProposalApprovedEvent {
     pub threshold: u32,
 }
 
-#[contracttype]
+#[contractevent(topics = ["proposal", "canceled"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProposalCanceledEvent {
     pub proposal_id: String,
     pub proposer: Address,
+}
+
+#[contractevent(topics = ["proposal", "executed"], data_format = "single-value")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProposalExecutedEvent {
+    pub proposal_id: String,
 }
 
 #[contract]
@@ -177,14 +192,12 @@ impl AdminMultisigContract {
         };
 
         Self::set_persistent(&env, &proposal_key, &proposal);
-        env.events().publish(
-            (symbol_short!("proposal"), symbol_short!("created")),
-            ProposalCreatedEvent {
-                proposal_id,
-                proposer,
-                expires_at_ledger,
-            },
-        );
+        ProposalCreatedEvent {
+            proposal_id,
+            proposer,
+            expires_at_ledger,
+        }
+        .publish(&env);
 
         proposal
     }
@@ -224,15 +237,13 @@ impl AdminMultisigContract {
         proposal.approvals.push_back(approver.clone());
         let approval_count = proposal.approvals.len();
 
-        env.events().publish(
-            (symbol_short!("proposal"), symbol_short!("approved")),
-            ProposalApprovedEvent {
-                proposal_id: proposal_id.clone(),
-                approver,
-                approval_count,
-                threshold: config.threshold,
-            },
-        );
+        ProposalApprovedEvent {
+            proposal_id: proposal_id.clone(),
+            approver,
+            approval_count,
+            threshold: config.threshold,
+        }
+        .publish(&env);
 
         let mut status = AdminProposalStatus::Pending;
         if approval_count >= config.threshold {
@@ -278,16 +289,24 @@ impl AdminMultisigContract {
         proposal.status = AdminProposalStatus::Cancelled;
         Self::set_persistent(&env, &proposal_key, &proposal);
 
-        env.events().publish(
-            (symbol_short!("proposal"), symbol_short!("canceled")),
-            ProposalCanceledEvent {
-                proposal_id,
-                proposer,
-            },
-        );
+        ProposalCanceledEvent {
+            proposal_id,
+            proposer,
+        }
+        .publish(&env);
     }
 
-    pub fn get_proposal(env: Env, proposal_id: String) -> AdminProposal {
+    /// Get a governance proposal.
+    ///
+    /// Proposal contents are sensitive governance data (pending upgrades, issuer
+    /// removals, config changes), so reads are restricted to registered admin
+    /// signers: the caller must authenticate and be present in the signer set.
+    pub fn get_proposal(env: Env, proposal_id: String, caller: Address) -> AdminProposal {
+        caller.require_auth();
+
+        let config = Self::get_config(env.clone());
+        Self::require_signer(&config.signers, &caller);
+
         env.storage()
             .persistent()
             .get(&AdminMultisigDataKey::AdminProposal(proposal_id))
@@ -406,10 +425,7 @@ impl AdminMultisigContract {
 
         proposal.status = AdminProposalStatus::Executed;
         Self::set_persistent(&env, &proposal_key, &proposal);
-        env.events().publish(
-            (symbol_short!("proposal"), symbol_short!("executed")),
-            proposal_id,
-        );
+        ProposalExecutedEvent { proposal_id }.publish(&env);
 
         AdminProposalStatus::Executed
     }
@@ -450,7 +466,7 @@ mod test {
     #[should_panic(expected = "Invalid admin multisig configuration")]
     fn test_init_rejects_threshold_above_signer_count() {
         let env = Env::default();
-        let contract_id = env.register_contract(None, AdminMultisigContract);
+        let contract_id = env.register(AdminMultisigContract, ());
         let client = AdminMultisigContractClient::new(&env, &contract_id);
 
         let signers = soroban_sdk::vec![

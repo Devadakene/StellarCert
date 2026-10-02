@@ -3,10 +3,26 @@
 extern crate std;
 
 use super::crl::*;
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, testutils::Events as _, Address, Env, String};
+use soroban_sdk::{
+    contract, contractimpl, testutils::Address as _, testutils::Events as _, Address, Env,
+    IntoVal, String, Symbol, Val,
+};
 use std::string::ToString;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Build the data payload the pre-`#[contractevent]` implementation emitted.
+///
+/// `CRLRevocationAddedEvent` used to be a `#[contracttype]` struct, which
+/// Soroban encodes as a map keyed by the field-name symbols;
+/// `#[contractevent]`'s default `data_format = "map"` renders the same shape.
+fn legacy_payload(env: &Env, fields: &[(&str, Val)]) -> Val {
+    let mut payload = soroban_sdk::Map::new(env);
+    for (key, value) in fields {
+        payload.set(Symbol::new(env, key), *value);
+    }
+    payload.into_val(env)
+}
 
 #[contract]
 struct CertificateExistsStub;
@@ -282,17 +298,40 @@ fn test_get_revoked_certificates_pagination() {
         client.revoke_certificate(&issuer, &s, &RevocationReason::KeyCompromise, &None);
     }
 
-    let page0 = client.get_revoked_certificates(&0, &3);
-    assert_eq!(page0.len(), 3);
-
+    // Pagination is 1-indexed: page 1 is the first page. A `page` of 0 is
+    // normalized to the first page, matching the certificate contract's
+    // listings.
     let page1 = client.get_revoked_certificates(&1, &3);
     assert_eq!(page1.len(), 3);
+    assert_eq!(page1.get(0).unwrap().certificate_id, String::from_str(&env, "CERT-0"));
 
     let page2 = client.get_revoked_certificates(&2, &3);
-    assert_eq!(page2.len(), 1); // only 1 left
+    assert_eq!(page2.len(), 3);
+    assert_eq!(page2.get(0).unwrap().certificate_id, String::from_str(&env, "CERT-3"));
 
     let page3 = client.get_revoked_certificates(&3, &3);
-    assert_eq!(page3.len(), 0); // beyond end
+    assert_eq!(page3.len(), 1); // only 1 left
+
+    let page4 = client.get_revoked_certificates(&4, &3);
+    assert_eq!(page4.len(), 0); // beyond end
+
+    // Page 0 is normalized to the first page (saturating), not skipped.
+    let page0 = client.get_revoked_certificates(&0, &3);
+    assert_eq!(page0.len(), 3);
+    assert_eq!(page0.get(0).unwrap().certificate_id, String::from_str(&env, "CERT-0"));
+}
+
+#[test]
+fn test_get_revoked_certificates_limit_cap() {
+    let (env, issuer, cert_contract) = setup();
+    let (_, client) = make_client(&env);
+    env.mock_all_auths();
+    client.initialize(&issuer, &cert_contract);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.get_revoked_certificates(&1, &101)
+    }));
+    assert!(result.is_err(), "limit above MAX_PAGE_SIZE should panic");
 }
 
 #[test]
@@ -443,17 +482,20 @@ fn test_revoke_certificate_emits_revocation_added_event() {
     let emitted = env.events().all();
 
     let crl = client.get_crl_info();
-    let expected_payload = CRLRevocationAddedEvent {
-        certificate_id: cert_id.clone(),
-        reason: RevocationReason::KeyCompromise as u32,
-        revoked_by: issuer.clone(),
-        revocation_date: env.ledger().timestamp(),
-        revoked_count: crl.revoked_count,
-        crl_number: crl.crl_number,
-        merkle_root: crl.merkle_root.clone(),
-        this_update: crl.this_update,
-        next_update: crl.next_update,
-    };
+    let expected_payload = legacy_payload(
+        &env,
+        &[
+            ("certificate_id", cert_id.clone().into_val(&env)),
+            ("reason", (RevocationReason::KeyCompromise as u32).into_val(&env)),
+            ("revoked_by", issuer.clone().into_val(&env)),
+            ("revocation_date", env.ledger().timestamp().into_val(&env)),
+            ("revoked_count", crl.revoked_count.into_val(&env)),
+            ("crl_number", crl.crl_number.into_val(&env)),
+            ("merkle_root", crl.merkle_root.clone().into_val(&env)),
+            ("this_update", crl.this_update.into_val(&env)),
+            ("next_update", crl.next_update.into_val(&env)),
+        ],
+    );
 
     let expected = vec![
         &env,
@@ -465,7 +507,7 @@ fn test_revoke_certificate_emits_revocation_added_event() {
                 symbol_short!("revoked").into_val(&env),
                 cert_id.clone().into_val(&env),
             ],
-            expected_payload.into_val(&env),
+            expected_payload,
         ),
     ];
 
@@ -499,6 +541,21 @@ fn test_each_revocation_emits_its_own_event_with_the_current_crl_head() {
     assert_eq!(after_second.crl_number, after_first.crl_number + 1);
     assert_ne!(after_first.merkle_root, after_second.merkle_root);
 
+    let expected_payload = legacy_payload(
+        &env,
+        &[
+            ("certificate_id", second.clone().into_val(&env)),
+            ("reason", (RevocationReason::CACompromise as u32).into_val(&env)),
+            ("revoked_by", issuer.clone().into_val(&env)),
+            ("revocation_date", env.ledger().timestamp().into_val(&env)),
+            ("revoked_count", after_second.revoked_count.into_val(&env)),
+            ("crl_number", after_second.crl_number.into_val(&env)),
+            ("merkle_root", after_second.merkle_root.clone().into_val(&env)),
+            ("this_update", after_second.this_update.into_val(&env)),
+            ("next_update", after_second.next_update.into_val(&env)),
+        ],
+    );
+
     let expected = vec![
         &env,
         (
@@ -509,18 +566,7 @@ fn test_each_revocation_emits_its_own_event_with_the_current_crl_head() {
                 symbol_short!("revoked").into_val(&env),
                 second.clone().into_val(&env),
             ],
-            CRLRevocationAddedEvent {
-                certificate_id: second.clone(),
-                reason: RevocationReason::CACompromise as u32,
-                revoked_by: issuer.clone(),
-                revocation_date: env.ledger().timestamp(),
-                revoked_count: after_second.revoked_count,
-                crl_number: after_second.crl_number,
-                merkle_root: after_second.merkle_root.clone(),
-                this_update: after_second.this_update,
-                next_update: after_second.next_update,
-            }
-            .into_val(&env),
+            expected_payload,
         ),
     ];
 

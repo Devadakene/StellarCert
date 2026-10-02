@@ -1,7 +1,5 @@
 #![no_std]
-use soroban_sdk::{
-    contract, contractimpl, symbol_short, Address, BytesN, Env, IntoVal, String, Symbol, Val, Vec,
-};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, IntoVal, String, Symbol, Val, Vec};
 
 mod types;
 // Explicit re-exports replace `pub use types::*` to avoid ambiguous_glob_reexports
@@ -25,7 +23,8 @@ pub use multisig::MultisigCertificateContract;
 mod crl;
 // Explicit re-exports replace `pub use crl::*`
 pub use crl::{
-    CRLContract, CRLInfo, CRLRevocationAddedEvent, RevocationInfo, RevocationReason,
+    CRLContract, CRLContractClient, CRLInfo, CRLRevocationAddedEvent, RevocationInfo,
+    RevocationReason,
 };
 
 pub mod persistent;
@@ -35,19 +34,35 @@ mod admin_multisig;
 pub use admin_multisig::{
     AdminAction, AdminMultisigConfig, AdminMultisigContract, AdminMultisigContractClient,
     AdminMultisigDataKey, AdminProposal, AdminProposalStatus, ProposalApprovedEvent,
-    ProposalCanceledEvent, ProposalCreatedEvent,
+    ProposalCanceledEvent, ProposalCreatedEvent, ProposalExecutedEvent,
 };
 
 #[cfg(test)]
 mod admin_multisig_test;
 #[cfg(test)]
+mod comprehensive_tests;
+#[cfg(test)]
 mod crl_test;
 #[cfg(test)]
+mod events_test;
+#[cfg(test)]
+mod issuer_management_test;
+#[cfg(test)]
 mod issuer_test;
+// metadata_test is deliberately NOT wired in: it exercises `mod metadata`,
+// which is itself commented out above and does not currently compile (32
+// errors). Wiring the test would mean first repairing that module, which is
+// a separate piece of work. See #1023.
+// #[cfg(test)]
+// mod metadata_test;
 #[cfg(test)]
 mod multisig_test;
 #[cfg(test)]
 mod revoke_sync_test;
+#[cfg(test)]
+mod status_test;
+#[cfg(test)]
+mod test;
 #[cfg(test)]
 mod transfer_security_test;
 
@@ -239,10 +254,13 @@ impl CertificateContract {
         Self::append_cert_id(&env, DataKey::OwnerCertIds(owner.clone()), id.clone());
 
         // Emit and publish issuance event
-        env.events().publish(
-            (symbol_short!("issued"), id.clone()),
-            CertificateIssuedEvent { id, issuer, owner },
-        );
+        CertificateIssuedEvent {
+            topic_id: id.clone(),
+            id,
+            issuer,
+            owner,
+        }
+        .publish(&env);
     }
 
     /// Revoke an existing certificate (only the original issuer can revoke).
@@ -271,10 +289,12 @@ impl CertificateContract {
         Self::mirror_revocation_to_crl(&env, &cert.issuer, &id, &reason);
 
         // Emit and publish revocation event
-        env.events().publish(
-            (symbol_short!("revoked"), id.clone()),
-            CertificateRevokedEvent { id, reason },
-        );
+        CertificateRevokedEvent {
+            topic_id: id.clone(),
+            id,
+            reason,
+        }
+        .publish(&env);
     }
 
     /// Configure the CRL contract that revocations must be mirrored into.
@@ -400,10 +420,11 @@ impl CertificateContract {
         Self::set_persistent(&env, &DataKey::Certificate(id.clone()), &cert);
 
         // Emit and publish suspension event
-        env.events().publish(
-            (symbol_short!("suspend"), id.clone()),
-            CertificateSuspendedEvent { id },
-        );
+        CertificateSuspendedEvent {
+            topic_id: id.clone(),
+            id,
+        }
+        .publish(&env);
     }
 
     /// Reinstate a suspended certificate
@@ -423,10 +444,11 @@ impl CertificateContract {
         Self::set_persistent(&env, &DataKey::Certificate(id.clone()), &cert);
 
         // Emit and publish reinstatement event
-        env.events().publish(
-            (symbol_short!("reinstat"), id.clone()),
-            CertificateReinstatedEvent { id },
-        );
+        CertificateReinstatedEvent {
+            topic_id: id.clone(),
+            id,
+        }
+        .publish(&env);
     }
 
     /// Freeze a certificate
@@ -459,10 +481,12 @@ impl CertificateContract {
         Self::set_persistent(&env, &DataKey::Certificate(id.clone()), &cert);
 
         // Emit and publish freeze event
-        env.events().publish(
-            (symbol_short!("frozen"), id.clone()),
-            CertificateFrozenEvent { id, reason },
-        );
+        CertificateFrozenEvent {
+            topic_id: id.clone(),
+            id,
+            reason,
+        }
+        .publish(&env);
     }
 
     /// Unfreeze a certificate
@@ -493,10 +517,11 @@ impl CertificateContract {
         Self::set_persistent(&env, &DataKey::Certificate(id.clone()), &cert);
 
         // Emit and publish unfreeze event
-        env.events().publish(
-            (symbol_short!("unfrozen"), id.clone()),
-            CertificateUnfrozenEvent { id },
-        );
+        CertificateUnfrozenEvent {
+            topic_id: id.clone(),
+            id,
+        }
+        .publish(&env);
     }
 
     /// Verify if a certificate is valid (active and not expired)
@@ -538,6 +563,13 @@ impl CertificateContract {
         cert.metadata_uri = new_metadata_uri;
 
         Self::set_persistent(&env, &DataKey::Certificate(id), &cert);
+    }
+
+    /// Update a certificate's metadata URI. The existing update path checks
+    /// the issuer stored on this certificate, so its owner or another issuer
+    /// cannot authorize a change. Keep the older entry point for callers.
+    pub fn update_metadata_uri(env: Env, id: String, new_metadata_uri: String) {
+        Self::update_certificate_metadata(env, id, new_metadata_uri);
     }
 
     /// Reissue a certificate with new version (creates child certificate)
@@ -611,15 +643,14 @@ impl CertificateContract {
 
         // Emit a distinct reissued event so indexers can tell a reissue apart
         // from a fresh issuance and observe the parent (old) certificate link.
-        env.events().publish(
-            (symbol_short!("reissued"), new_id.clone()),
-            CertificateReissuedEvent {
-                id: new_id,
-                old_id: old_id.clone(),
-                issuer,
-                owner: new_cert.owner,
-            },
-        );
+        CertificateReissuedEvent {
+            topic_id: new_id.clone(),
+            id: new_id,
+            old_id: old_id.clone(),
+            issuer,
+            owner: new_cert.owner,
+        }
+        .publish(&env);
     }
 
     // --- Certificate Transfer Functions ---
@@ -737,13 +768,12 @@ impl CertificateContract {
         Self::set_persistent(&env, &DataKey::Transfer(transfer_id.clone()), &transfer);
 
         // Emit the transfer acceptance event
-        env.events().publish(
-            (symbol_short!("accepted"), transfer_id.clone()),
-            TransferAcceptedEvent {
-                transfer_id: transfer_id.clone(),
-                to_owner: to_owner.clone(),
-            },
-        );
+        TransferAcceptedEvent {
+            topic_transfer_id: transfer_id.clone(),
+            transfer_id: transfer_id.clone(),
+            to_owner: to_owner.clone(),
+        }
+        .publish(&env);
 
         // Remove from pending transfers
         let pending = Self::get_pending_transfers(&env, to_owner.clone());
@@ -824,13 +854,12 @@ impl CertificateContract {
             cert.revocation_reason = Some(reason.clone());
 
             // Emit and publish revocation event for indexers
-            env.events().publish(
-                (symbol_short!("revoked"), transfer.certificate_id.clone()),
-                CertificateRevokedEvent {
-                    id: transfer.certificate_id.clone(),
-                    reason,
-                },
-            );
+            CertificateRevokedEvent {
+                topic_id: transfer.certificate_id.clone(),
+                id: transfer.certificate_id.clone(),
+                reason,
+            }
+            .publish(&env);
         }
 
         Self::set_persistent(
@@ -853,15 +882,14 @@ impl CertificateContract {
         );
 
         // Emit a completion event for off-chain systems
-        env.events().publish(
-            (Symbol::new(&env, "transfer_done"), transfer_id.clone()),
-            TransferCompletedEvent {
-                transfer_id,
-                certificate_id: cert.id,
-                from_owner: transfer.from_owner,
-                to_owner: cert.owner,
-            },
-        );
+        TransferCompletedEvent {
+            topic_transfer_id: transfer_id.clone(),
+            transfer_id,
+            certificate_id: cert.id,
+            from_owner: transfer.from_owner,
+            to_owner: cert.owner,
+        }
+        .publish(&env);
     }
 
     /// Reject a pending certificate transfer
@@ -1470,6 +1498,8 @@ impl CertificateContract {
         ver.last_wasm_hash = new_wasm_hash.clone();
         Self::set_persistent(&env, &DataKey::ContractVersion, &ver);
 
+        #[allow(deprecated)]
+
         env.deployer().update_current_contract_wasm(new_wasm_hash);
     }
 
@@ -1766,3 +1796,5 @@ impl CertificateContract {
         }
     }
 }
+
+

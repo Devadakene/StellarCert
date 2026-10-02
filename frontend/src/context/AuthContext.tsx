@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useEffect, useState, useMemo, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useMemo, useCallback, ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { User } from '../api/types';
 import { tokenStorage, setTokenRefreshCallback } from '../api/tokens';
 import { authApi } from '../api/endpoints';
-import { useNavigate } from 'react-router-dom';
+import { queryKeys } from '../api/queries';
 
 // Helper function to decode JWT payload safely (handling base64url characters - and _ and missing padding)
 export const decodeJwtPayload = (token: string): any => {
@@ -71,52 +73,86 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     tokenStorage.getAccessToken(),
   );
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  // The session user is mirrored into the query cache under `queryKeys.session()`
+  // so components that read the profile (header, issuer profile page) share one
+  // entry instead of each issuing their own /users/profile request.
+  const setUser = useCallback(
+    (nextUser: User | null) => {
+      setUserState(nextUser);
+      if (nextUser) {
+        queryClient.setQueryData(queryKeys.session(), nextUser);
+      }
+    },
+    [queryClient],
+  );
 
   // Derive isAuthenticated once per token/user change.
   const isAuthenticated = useMemo(() => {
     return !!user && !!accessToken && !isTokenExpired(accessToken);
   }, [user, accessToken]);
 
-  useEffect(() => {
-    // Check token or rehydrate via refresh cookie on app load
-    const rehydrateOrCheck = async () => {
-      const currentToken = tokenStorage.getAccessToken();
+  // Logout must not leave the previous user's data in the cache: every list,
+  // wallet and analytics entry is keyed to the account that fetched it.
+  const clearAuth = useCallback(() => {
+    setUserState(null);
+    tokenStorage.clearTokens();
+    setAccessTokenState(null);
+    queryClient.clear();
+  }, [queryClient]);
 
-      if (currentToken && !isTokenExpired(currentToken)) {
-        setAccessTokenState(currentToken);
-        setIsLoading(false);
-      } else if (currentToken && isTokenExpired(currentToken)) {
-        console.warn('Access token expired, clearing authentication state');
-        tokenStorage.clearTokens();
-        setUserState(null);
-        setAccessTokenState(null);
-        setIsLoading(false);
-      } else {
-        // Attempt silent token refresh via HttpOnly cookie on initial load
-        try {
-          const response = await authApi.refresh();
-          if (response.accessToken && !isTokenExpired(response.accessToken)) {
-            tokenStorage.setAccessToken(response.accessToken);
-            setAccessTokenState(response.accessToken);
-            if (response.user) {
-              setUserState(response.user);
-            }
-          } else {
-            tokenStorage.clearTokens();
-            setUserState(null);
-            setAccessTokenState(null);
+  const login = useCallback(
+    (nextAccessToken: string, nextUser: User) => {
+      if (isTokenExpired(nextAccessToken)) {
+        console.error('Attempted to login with expired token');
+        return;
+      }
+
+      // Access token is held in-memory in tokenStorage
+      tokenStorage.setAccessToken(nextAccessToken);
+      setAccessTokenState(nextAccessToken);
+      setUser(nextUser);
+    },
+    [setUser],
+  );
+
+  useEffect(() => {
+    /**
+     * Bootstrap authentication before rendering any application routes.
+     *
+     * The access token intentionally lives only in memory, so a full page load
+     * cannot reuse it. One explicit refresh establishes the session from the
+     * HttpOnly refresh-token cookie. AuthProvider keeps isLoading=true until
+     * this finishes, preventing protected components from issuing 401s during
+     * startup and eliminating the refresh burst/cooldown workaround.
+     */
+    const bootstrap = async () => {
+      try {
+        const response = await authApi.bootstrapAuth();
+
+        if (response.accessToken && !isTokenExpired(response.accessToken)) {
+          tokenStorage.setAccessToken(response.accessToken);
+          setAccessTokenState(response.accessToken);
+          if (response.user) {
+            setUser(response.user);
           }
-        } catch {
+        } else {
           tokenStorage.clearTokens();
-          setUserState(null);
+          setUser(null);
           setAccessTokenState(null);
-        } finally {
-          setIsLoading(false);
         }
+      } catch {
+        // No valid refresh cookie means the app starts unauthenticated.
+        tokenStorage.clearTokens();
+        setUser(null);
+        setAccessTokenState(null);
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    rehydrateOrCheck();
+    bootstrap();
 
     // Keep AuthContext in sync when apiClient silently refreshes the access token.
     setTokenRefreshCallback((newAccessToken, refreshedUser) => {
@@ -125,7 +161,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       setAccessTokenState(newAccessToken);
       if (refreshedUser) {
-        setUserState(refreshedUser);
+        setUser(refreshedUser);
       }
       setIsLoading(false);
     });
@@ -136,17 +172,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (currentToken && isTokenExpired(currentToken)) {
         console.warn('Access token expired, clearing authentication state');
         tokenStorage.clearTokens();
-        setUserState(null);
-        setAccessTokenState(null);
+        clearAuth();
       }
     }, 5 * 60 * 1000);
 
     return () => {
       clearInterval(interval);
-      // Drop the callback so a torn-down provider can't update stale state.
       setTokenRefreshCallback(() => {});
     };
-  }, []);
+    // `clearAuth` is stable; `setUser` changes only with the QueryClient.
+  }, [clearAuth, setUser]);
 
   useEffect(() => {
     if (!user) {
@@ -155,14 +190,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [user]);
 
-  const setUser = (nextUser: User | null) => setUserState(nextUser);
-
-  const clearAuth = () => {
-    setUserState(null);
-    tokenStorage.clearTokens();
-    setAccessTokenState(null);
-  };
-
   const logout = useCallback(async () => {
     try {
       await authApi.logout();
@@ -170,20 +197,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       clearAuth();
       navigate('/');
     }
-  }, [navigate]);
-
-  const login = (accessToken: string, nextUser: User) => {
-    if (isTokenExpired(accessToken)) {
-      console.error('Attempted to login with expired token');
-      return;
-    }
-
-    // Access token is held in-memory in tokenStorage
-    tokenStorage.setAccessToken(accessToken);
-    setAccessTokenState(accessToken);
-    setUserState(nextUser);
-  };
-
+  }, [navigate, clearAuth]);
   if (isLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-slate-950">
